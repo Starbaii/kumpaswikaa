@@ -10,8 +10,14 @@ import {
 } from 'react-native';
 import { colors, fonts, radii } from '../theme';
 
-// TODO: replace with data pulled from PhrasebookRepository (SQLite) once
-// the data layer is wired up. Mirrors the PhrasebookEntry shape from the ERD.
+export const SEED = [
+  { gloss: 'HELP', category: 'Emergency', tagalog: 'Tulong po!', english: 'Help me!', isEmergency: true, imageKey: 'help' },
+  { gloss: 'AMBULANCE', category: 'Emergency', tagalog: 'Tumawag po kayo ng ambulansya', english: 'Please call an ambulance', isEmergency: true, imageKey: 'ambulance' },
+  { gloss: 'BUS-STOP', category: 'Travel', tagalog: 'Saan ang bus stop?', english: "Where's the bus stop?", isEmergency: false, imageKey: 'bus_stop' },
+  { gloss: 'HOW-MUCH', category: 'Shopping', tagalog: 'Magkano po?', english: 'How much is it?', isEmergency: false, imageKey: 'how_much' },
+
+];
+
 const MOCK_ENTRIES = [
   { entryId: 1, category: 'Travel', tagalogText: 'Saan ang bus stop?', englishText: "Where's the bus stop?" },
   { entryId: 2, category: 'Shopping', tagalogText: 'Tulong po', englishText: 'Help me' },
