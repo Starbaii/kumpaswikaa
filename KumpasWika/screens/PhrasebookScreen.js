@@ -1,101 +1,204 @@
 // screens/PhrasebookScreen.js
-import React, { useState } from 'react';
+// Offline Phrasebook (FR-7): everything is bundled with the app, no network needed.
+//   Letters tab  -> card grid of the FSL alphabet (picture + letter)
+//   Phrases tab  -> text-only phrases; the Speak button reads them aloud (device TTS)
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   FlatList,
+  Image,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
+import * as Speech from 'expo-speech';
 import { colors, fonts, radii } from '../theme';
+import { LETTERS } from '../data/letters';
+import { PHRASES, CATEGORIES } from '../data/phrases';
 
-export const SEED = [
-  { gloss: 'HELP', category: 'Emergency', tagalog: 'Tulong po!', english: 'Help me!', isEmergency: true, imageKey: 'help' },
-  { gloss: 'AMBULANCE', category: 'Emergency', tagalog: 'Tumawag po kayo ng ambulansya', english: 'Please call an ambulance', isEmergency: true, imageKey: 'ambulance' },
-  { gloss: 'BUS-STOP', category: 'Travel', tagalog: 'Saan ang bus stop?', english: "Where's the bus stop?", isEmergency: false, imageKey: 'bus_stop' },
-  { gloss: 'HOW-MUCH', category: 'Shopping', tagalog: 'Magkano po?', english: 'How much is it?', isEmergency: false, imageKey: 'how_much' },
+const COLUMNS = 3;
 
-];
-
-const MOCK_ENTRIES = [
-  { entryId: 1, category: 'Travel', tagalogText: 'Saan ang bus stop?', englishText: "Where's the bus stop?" },
-  { entryId: 2, category: 'Shopping', tagalogText: 'Tulong po', englishText: 'Help me' },
-  { entryId: 3, category: 'Travel', tagalogText: 'Ilang minuto pa', englishText: 'How many more minutes' },
-];
-
-const CATEGORIES = ['Travel', 'Food', 'Shopping'];
 const CATEGORY_COLORS = {
-  Travel: colors.navy,
+  Emergency: colors.deepRed,
+  Travel: '#2F6FB5',
   Food: colors.gold,
-  Shopping: colors.deepRed,
+  Shopping: '#2F7D5B',
 };
 
-export default function PhrasebookScreen({ navigation }) {
-  const [query, setQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('Travel');
 
-  const filtered = MOCK_ENTRIES.filter((e) => {
-    const matchesCategory = e.category === activeCategory;
-    const matchesQuery =
-      query.length === 0 ||
-      e.tagalogText.toLowerCase().includes(query.toLowerCase()) ||
-      e.englishText.toLowerCase().includes(query.toLowerCase());
-    return matchesCategory && matchesQuery;
-  });
+// Pad the letter list so the last row keeps the same card width (26 is not divisible by 3)
+const PADDED_LETTERS = (() => {
+  const items = [...LETTERS];
+  while (items.length % COLUMNS !== 0) {
+    items.push({ letter: `spacer-${items.length}`, spacer: true });
+  }
+  return items;
+})();
+
+export default function PhrasebookScreen({ navigation, route }) {
+  const language = route?.params?.language ?? 'tagalog';
+  const { width: screenWidth } = useWindowDimensions();
+  const cardWidth = (screenWidth - 32) / COLUMNS - 10; // 32 = screen padding, 10 = card margins
+  const [tab, setTab] = useState('letters'); // 'letters' | 'phrases'
+  const [query, setQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('Emergency');
+  const [speakingId, setSpeakingId] = useState(null);
+
+  // Stop any speech when leaving the screen
+  useEffect(() => () => Speech.stop(), []);
+
+  const phrases = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return PHRASES.filter(
+      (p) =>
+        p.category === activeCategory &&
+        (q.length === 0 ||
+          p.tagalog.toLowerCase().includes(q) ||
+          p.english.toLowerCase().includes(q))
+    );
+  }, [query, activeCategory]);
+
+  const speak = (item) => {
+    // Tapping the button again while it is speaking stops it
+    if (speakingId === item.id) {
+      Speech.stop();
+      setSpeakingId(null);
+      return;
+    }
+    Speech.stop();
+    const isTagalog = language === 'tagalog';
+    setSpeakingId(item.id);
+    const clear = () => setSpeakingId((cur) => (cur === item.id ? null : cur));
+    Speech.speak(isTagalog ? item.tagalog : item.english, {
+      language: isTagalog ? 'fil-PH' : 'en-US',
+      rate: 0.9,
+      onDone: clear,
+      onStopped: clear,
+      onError: clear,
+    });
+  };
+
+  const renderLetter = ({ item }) => {
+  if (item.spacer) return <View style={{ width: cardWidth, margin: 5 }} />;
+  return (
+    <View style={[styles.letterCard, { width: cardWidth }]}>
+      <Image
+        source={item.image}
+        style={{ width: cardWidth - 20, height: cardWidth - 20 }}
+        resizeMode="contain"
+      />
+      <Text style={styles.letterLabel}>{item.letter}</Text>
+    </View>
+    );
+  };
+
+  const renderPhrase = ({ item }) => {
+    const isSpeaking = speakingId === item.id;
+    const main = language === 'tagalog' ? item.tagalog : item.english;
+    const sub = language === 'tagalog' ? item.english : item.tagalog;
+    return (
+      <View style={[styles.phraseCard, item.isEmergency && styles.phraseCardEmergency]}>
+        <View style={styles.phraseTextWrap}>
+          <Text style={styles.phraseMain}>{main}</Text>
+          <Text style={styles.phraseSub}>{sub}</Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.speakButton, isSpeaking && styles.speakButtonActive]}
+          onPress={() => speak(item)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.speakButtonText}>{isSpeaking ? '⏹ Stop' : '🔊 Speak'}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Text style={styles.backText}>← Back</Text>
+      </TouchableOpacity>
       <Text style={styles.title}>Offline Phrasebook</Text>
 
-      <View style={styles.searchBar}>
-        <Text style={styles.searchIcon}>🔍</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search Phrases"
-          placeholderTextColor={colors.textMuted}
-          value={query}
-          onChangeText={setQuery}
-        />
-      </View>
-
-      <View style={styles.categoryRow}>
-        {CATEGORIES.map((cat) => (
+      {/* Tab switch */}
+      <View style={styles.tabRow}>
+        {[
+          { key: 'letters', label: 'Letters' },
+          { key: 'phrases', label: 'Phrases' },
+        ].map((t) => (
           <TouchableOpacity
-            key={cat}
-            style={[
-              styles.categoryPill,
-              { backgroundColor: CATEGORY_COLORS[cat] },
-              activeCategory === cat && styles.categoryPillActive,
-            ]}
-            onPress={() => setActiveCategory(cat)}
+            key={t.key}
+            style={[styles.tab, tab === t.key && styles.tabActive]}
+            onPress={() => setTab(t.key)}
             activeOpacity={0.85}
           >
-            <Text style={styles.categoryPillText}>{cat}</Text>
+            <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>
+              {t.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => String(item.entryId)}
-        contentContainerStyle={styles.list}
-        renderItem={({ item }) => (
-          <View style={styles.entryCard}>
-            <Text style={styles.entryIcon}>🗣️</Text>
-            <View style={styles.entryTextWrap}>
-              <Text style={styles.entryTagalog}>{item.tagalogText}</Text>
-              <Text style={styles.entryEnglish}>{item.englishText}</Text>
-            </View>
-            <TouchableOpacity style={styles.sendButton} activeOpacity={0.85}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
+      {tab === 'letters' ? (
+        <FlatList
+          key="letters" // separate key because numColumns is set
+          data={PADDED_LETTERS}
+          keyExtractor={(item) => item.letter}
+          numColumns={COLUMNS}
+          renderItem={renderLetter}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : (
+        <>
+          <View style={styles.searchBar}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search Phrases"
+              placeholderTextColor={colors.textMuted}
+              value={query}
+              onChangeText={setQuery}
+            />
           </View>
-        )}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No phrases found.</Text>
-        }
-      />
+
+          <View style={styles.categoryRow}>
+            {CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                style={[
+                  styles.categoryPill,
+                  { backgroundColor: CATEGORY_COLORS[cat] },
+                  activeCategory === cat && styles.categoryPillActive,
+                ]}
+                onPress={() => setActiveCategory(cat)}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.categoryPillText,
+                    cat === 'Food' && { color: colors.textDark },
+                  ]}
+                >
+                  {cat}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <FlatList
+            key="phrases"
+            data={phrases}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderPhrase}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={<Text style={styles.emptyText}>No phrases found.</Text>}
+          />
+        </>
+      )}
     </View>
   );
 }
@@ -104,15 +207,81 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.navy,
-    paddingHorizontal: 20,
-    paddingTop: 56,
+    paddingHorizontal: 16,
+    paddingTop: 52,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  backText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: colors.gold,
   },
   title: {
     fontFamily: fonts.heading,
     fontSize: 20,
     color: colors.white,
+    marginBottom: 14,
+  },
+
+  // Tabs
+  tabRow: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: radii.pill,
+    padding: 4,
     marginBottom: 16,
   },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+  },
+  tabActive: {
+    backgroundColor: colors.gold,
+  },
+  tabText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: colors.white,
+  },
+  tabTextActive: {
+    color: colors.textDark,
+  },
+
+  list: {
+    paddingBottom: 24,
+  },
+
+  // Letters grid
+  letterCard: {
+  margin: 5,
+  backgroundColor: colors.cardCream,
+  borderRadius: radii.card,
+  padding: 10,
+  alignItems: 'center',
+  overflow: 'hidden',
+  },
+  letterSpacer: {
+    flex: 1,
+    margin: 5,
+  },
+  letterImage: {
+    width: '100%',
+    aspectRatio: 1,
+    marginBottom: 6,
+  },
+  letterLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 22,
+    color: colors.deepRed,
+  },
+
+  // Phrases
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -120,7 +289,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   searchIcon: {
     fontSize: 14,
@@ -134,12 +303,13 @@ const styles = StyleSheet.create({
   },
   categoryRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
   },
   categoryPill: {
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: radii.pill,
     opacity: 0.75,
   },
@@ -154,10 +324,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: colors.white,
   },
-  list: {
-    paddingBottom: 24,
-  },
-  entryCard: {
+  phraseCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.cardCream,
@@ -165,35 +332,37 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
   },
-  entryIcon: {
-    fontSize: 18,
-    marginRight: 10,
+  phraseCardEmergency: {
+    borderLeftWidth: 5,
+    borderLeftColor: colors.deepRed,
   },
-  entryTextWrap: {
+  phraseTextWrap: {
     flex: 1,
+    paddingRight: 10,
   },
-  entryTagalog: {
+  phraseMain: {
     fontFamily: fonts.bodyBold,
-    fontSize: 13,
-    fontStyle: 'italic',
-    color: colors.deepRed,
+    fontSize: 15,
+    color: colors.textDark,
   },
-  entryEnglish: {
+  phraseSub: {
     fontFamily: fonts.body,
-    fontSize: 11,
+    fontSize: 12,
     color: colors.textMuted,
-    marginTop: 2,
+    marginTop: 3,
   },
-  sendButton: {
+  speakButton: {
     backgroundColor: colors.navy,
-    paddingVertical: 7,
+    paddingVertical: 9,
     paddingHorizontal: 14,
     borderRadius: radii.pill,
   },
-  sendButtonText: {
+  speakButtonActive: {
+    backgroundColor: colors.deepRed,
+  },
+  speakButtonText: {
     fontFamily: fonts.bodyBold,
-    fontSize: 11,
-    fontStyle: 'italic',
+    fontSize: 12,
     color: colors.white,
   },
   emptyText: {

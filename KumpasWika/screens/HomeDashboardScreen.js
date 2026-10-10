@@ -46,7 +46,7 @@ export default function HomeDashboardScreen({ navigation, route }) {
 
         <TouchableOpacity
           style={styles.tile}
-          onPress={() => navigation.navigate('Phrasebook')}
+             onPress={() => navigation.navigate('Phrasebook', { language })}
           activeOpacity={0.85}
         >
           <Text style={styles.tileIcon}>📖</Text>
