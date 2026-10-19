@@ -7,7 +7,10 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "KumpasWika uses your camera to read your signing."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -15,7 +18,12 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "package": "com.kumpaswika.app",
+      "permissions": [
+        "CAMERA",
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -23,7 +31,28 @@
     "plugins": [
       "expo-font",
       "expo-splash-screen",
-      "expo-sqlite"
-    ]
+      "expo-sqlite",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "KumpasWika uses your camera to read your signing.",
+          "enableMicrophonePermission": false
+        }
+      ],
+      [
+        "./node_modules/expo-vision-camera-v4-mediapipe/plugin/index.js",
+        {
+          "numHands": 2,
+          "minDetectionConfidence": 0.5,
+          "minPresenceConfidence": 0.5,
+          "minTrackingConfidence": 0.5
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c9cdf322-07fa-46ca-ae91-639bf24c2f61"
+      }
+    }
   }
 }
