@@ -9,7 +9,9 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "KumpasWika uses your camera to read your signing."
+        "NSCameraUsageDescription": "KumpasWika uses your camera to read your signing.",
+        "NSMicrophoneUsageDescription": "KumpasWika uses your microphone to turn spoken replies into text.",
+        "NSSpeechRecognitionUsageDescription": "KumpasWika turns spoken replies into text for Deaf users."
       }
     },
     "android": {
@@ -22,7 +24,8 @@
       "package": "com.kumpaswika.app",
       "permissions": [
         "CAMERA",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -46,6 +49,17 @@
           "minDetectionConfidence": 0.5,
           "minPresenceConfidence": 0.5,
           "minTrackingConfidence": 0.5
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "KumpasWika uses your microphone to turn spoken replies into text.",
+          "speechRecognitionPermission": "KumpasWika turns spoken replies into text for Deaf users.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as"
+          ]
         }
       ]
     ],
