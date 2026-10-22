@@ -1,6 +1,6 @@
 npm install
 npm install -g eas-cli
 npm install --legacy-peer-deps
-eas login (note you must have an expo account for this)
+eas login (note you must have an expo.dev account for this)
 set EAS_NO_VCS=1
 eas build -p android --profile preview
