@@ -17,7 +17,20 @@ import LanguageSetupScreen from './screens/LanguageSetupScreen';
 import HomeDashboardScreen from './screens/HomeDashboardScreen';
 import IcebreakerScreen from './screens/IcebreakerScreen';
 import PhrasebookScreen from './screens/PhrasebookScreen';
-import SignCaptureScreen from './screens/SignCaptureScreen';
+import { View, Text } from 'react-native';
+
+let SignCaptureScreen;
+try {
+  SignCaptureScreen = require('./screens/SignCaptureScreen').default;
+} catch (e) {
+  SignCaptureScreen = () => (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Text style={{ textAlign: 'center' }}>
+        Sign capture needs a development build, not Expo Go.
+      </Text>
+    </View>
+  );
+}
 
 SplashScreenExpo.preventAutoHideAsync();
 

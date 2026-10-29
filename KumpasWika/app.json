@@ -16,7 +16,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1B3A6B",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -61,12 +61,14 @@
             "com.google.android.as"
           ]
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {
-        "projectId": "c9cdf322-07fa-46ca-ae91-639bf24c2f61"
+        "projectId": "782b4b80-2bd8-4705-bb6b-c81f2f898edf"
       }
-    }
+    },
+    "owner": "mokz01"
   }
 }
