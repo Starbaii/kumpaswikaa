@@ -43,7 +43,7 @@
         }
       ],
       [
-        "./node_modules/expo-vision-camera-v4-mediapipe/plugin/index.js",
+        "./plugins/HandLandmarker.js",
         {
           "numHands": 2,
           "minDetectionConfidence": 0.5,
@@ -66,9 +66,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "782b4b80-2bd8-4705-bb6b-c81f2f898edf"
+        "projectId": "1c16e112-c7ce-4336-966c-8e9f91c4e00a"
       }
     },
-    "owner": "mokz01"
+    "owner": "kumpaswika"
   }
 }
