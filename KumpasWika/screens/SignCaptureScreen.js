@@ -4,7 +4,7 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
   Camera,
   useCameraDevice,
@@ -14,15 +14,15 @@ import {
   VisionCameraProxy,
 } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
-import { SEQUENCE_LENGTH } from '../lib/config';
+import { FRAME_STRIDE, SEQUENCE_LENGTH, UI_INTERVAL_MS } from '../lib/config';
 import { labelText } from '../lib/labels';
-import { getRecognizer } from '../lib/models';
+import { getRecognizer, isRecognizerReady } from '../lib/models';
 import { colors, fonts, radii } from '../theme';
 
 
 const handPlugin = VisionCameraProxy.initFrameProcessorPlugin('handLandmarker', {});
+const STRIDE = Math.max(1, FRAME_STRIDE | 0); // plain number, safe to capture inside the worklet
 
-const UI_INTERVAL_MS = 120; // on screen refresh num
 const ALLOW_ONLINE_FALLBACK = true; // use online speech recognition when no offline model exists
 const START_TIMEOUT_MS = 5000; // give up if the recognizer never reports 'start'
 
@@ -56,7 +56,16 @@ export default function SignCaptureScreen({ navigation, route }) {
     { fps: 30 },
   ]);
 
-  const loaded = useMemo(() => getRecognizer(), []);
+  // Building the forests from ~10 MB of JSON blocks the JS thread, so do it after the
+  // screen has painted (App.js also preloads it) instead of inside the first render.
+  const [loaded, setLoaded] = useState(() => (isRecognizerReady() ? getRecognizer() : null));
+  useEffect(() => {
+    if (loaded) return undefined;
+    const id = setTimeout(() => setLoaded(getRecognizer()), 50);
+    return () => clearTimeout(id);
+  }, [loaded]);
+  const recognizerRef = useRef(null);
+  recognizerRef.current = loaded && loaded.recognizer ? loaded.recognizer : null;
   const languageRef = useRef(language);
   const autoSpeakRef = useRef(autoSpeak);
   const lastUiRef = useRef(0);
@@ -288,11 +297,18 @@ export default function SignCaptureScreen({ navigation, route }) {
     }
   };
 
-  // The JS thread for every camera frame.
-  const handleResult = useCallback(
-    (result) => {
-      if (!loaded.recognizer) return;
-      const out = loaded.recognizer.process(result);
+  // Shared with the frame-processor worklet: 'busy' makes it DROP frames while the JS
+  // thread is still working, so results never queue up and lag behind the camera.
+  const busy = useMemo(() => Worklets.createSharedValue(false), []);
+  const frameCounter = useMemo(() => Worklets.createSharedValue(0), []);
+  // JS side of every camera frame that made it past the throttle below.
+  const lastShownRef = useRef('');
+  const handleResult = useCallback((result) => {
+    try {
+      const recognizer = recognizerRef.current;
+      if (!recognizer) return;
+      const now = Date.now();
+      const out = recognizer.process(result, now);
 
       if (out.committed) {
         const label = out.committed;
@@ -305,21 +321,35 @@ export default function SignCaptureScreen({ navigation, route }) {
         }
       }
 
-      const now = Date.now();
+      // Re-rendering the whole screen is expensive: only do it a few times a second,
+      // and only when something visible actually changed.
       if (now - lastUiRef.current >= UI_INTERVAL_MS) {
-        lastUiRef.current = now;
-        setLive({
-          handCount: out.handCount,
-          bufferFill: out.bufferFill,
-          candidate: out.candidate,
-          rawStatic: out.static,
-          rawVideo: out.video,
-          error: result && result.error,
-        });
+        const c = out.candidate;
+        const key = [
+          out.handCount,
+          out.bufferFill,
+          c ? c.label + Math.round(c.confidence * 100) + c.source : '',
+          out.static ? out.static.label + Math.round(out.static.confidence * 100) : '',
+          out.video ? out.video.label + Math.round(out.video.confidence * 100) : '',
+          result && result.error ? String(result.error) : '',
+        ].join('|');
+        if (key !== lastShownRef.current) {
+          lastShownRef.current = key;
+          lastUiRef.current = now;
+          setLive({
+            handCount: out.handCount,
+            bufferFill: out.bufferFill,
+            candidate: out.candidate,
+            rawStatic: out.static,
+            rawVideo: out.video,
+            error: result && result.error,
+          });
+        }
       }
-    },
-    [loaded]
-  );
+    } finally {
+      busy.value = false; // let the camera thread send the next frame
+    }
+  }, []);
 
   const onResult = useMemo(() => Worklets.createRunOnJS(handleResult), [handleResult]);
 
@@ -327,10 +357,16 @@ export default function SignCaptureScreen({ navigation, route }) {
     (frame) => {
       'worklet';
       if (handPlugin == null) return;
+      if (busy.value) return;
+      frameCounter.value = frameCounter.value + 1;
+      if (frameCounter.value % STRIDE !== 0) return;
       const result = handPlugin.call(frame, { pose: false, face: false });
-      if (result != null) onResult(result);
+      if (result != null) {
+        busy.value = true;
+        onResult(result);
+      }
     },
-    [onResult]
+    [onResult, busy, frameCounter]
   );
 
   // Reads the signed sentence out loud (this used to be the Speak button).
@@ -358,6 +394,15 @@ export default function SignCaptureScreen({ navigation, route }) {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.link}>Go back</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!loaded) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <ActivityIndicator color={colors.gold} size="large" />
+        <Text style={[styles.body, { marginTop: 16, marginBottom: 0 }]}>Loading sign models…</Text>
       </View>
     );
   }
@@ -413,6 +458,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         format={format}
         isActive
         pixelFormat="rgb" // required by the MediaPipe plugin
+        fps={format ? Math.min(30, format.maxFps) : 30}
         frameProcessor={frameProcessor}
       />
 
@@ -433,7 +479,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         <TouchableOpacity
           style={styles.roundButton}
           onPress={() => {
-            loaded.recognizer.reset();
+            if (recognizerRef.current) recognizerRef.current.reset();
             setFacing((f) => (f === 'front' ? 'back' : 'front'));
           }}
         >
