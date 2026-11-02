@@ -18,6 +18,7 @@ import HomeDashboardScreen from './screens/HomeDashboardScreen';
 import IcebreakerScreen from './screens/IcebreakerScreen';
 import PhrasebookScreen from './screens/PhrasebookScreen';
 import { View, Text } from 'react-native';
+import { preloadRecognizer } from './lib/models';
 
 let SignCaptureScreen;
 try {
@@ -33,6 +34,8 @@ try {
 }
 
 SplashScreenExpo.preventAutoHideAsync();
+
+preloadRecognizer(1500);
 
 const Stack = createNativeStackNavigator();
 
