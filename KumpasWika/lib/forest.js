@@ -1,4 +1,3 @@
-
 function loadForest(js) {
   if (!js || js.type !== 'random_forest' || !Array.isArray(js.trees)) {
     throw new Error('Model JSON is not an exported random_forest.');
@@ -7,12 +6,13 @@ function loadForest(js) {
     classes: js.classes,
     nClasses: js.nClasses,
     nFeatures: js.nFeatures,
+    featureVersion: js.featureVersion || (js.nFeatures === 2600 ? 2 : 1),
     trees: js.trees.map((t) => ({
       f: Int32Array.from(t.f),
       t: Float64Array.from(t.t),
       l: Int32Array.from(t.l),
       r: Int32Array.from(t.r),
-      p: t.p || null, 
+      p: t.p || null,
     })),
   };
 }
@@ -42,7 +42,9 @@ function predictProba(forest, x, out) {
 function predict(forest, x, scratch) {
   const proba = predictProba(forest, x, scratch);
   let best = 0;
-  for (let c = 1; c < proba.length; c++) if (proba[c] > proba[best]) best = c;
+  for (let c = 1; c < proba.length; c++) {
+    if (proba[c] > proba[best]) best = c;
+  }
   return { label: forest.classes[best], confidence: proba[best] };
 }
 
