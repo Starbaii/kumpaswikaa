@@ -1,33 +1,39 @@
 const cfg = require('./config');
 const { loadForest, predict } = require('./forest');
-const { extractTwoHandFeatures } = require('./features');
+const { extractTwoHandFeatures, toRecords, staticFeaturesV2, videoFeaturesV2 } = require('./features');
 
 class SignRecognizer {
   constructor(staticJson, videoJson) {
     this.staticForest = loadForest(staticJson);
     this.videoForest = loadForest(videoJson);
 
-    if (this.staticForest.nFeatures !== cfg.FEATURES_PER_FRAME) {
+    this.staticV = this.staticForest.featureVersion;
+    this.videoV = this.videoForest.featureVersion;
+    const wantStatic = cfg.FEATURES_PER_FRAME;
+    const wantVideo = this.videoV === 2 ? cfg.FEATURES_PER_VIDEO_V2 : cfg.FEATURES_PER_VIDEO;
+
+    if (this.staticForest.nFeatures !== wantStatic) {
       throw new Error(
-        `Static model expects ${this.staticForest.nFeatures} features, app builds ${cfg.FEATURES_PER_FRAME}.`
+        `Static model expects ${this.staticForest.nFeatures} features, app builds ${wantStatic}.`
       );
     }
-    if (this.videoForest.nFeatures !== cfg.FEATURES_PER_VIDEO) {
+    if (this.videoForest.nFeatures !== wantVideo) {
       throw new Error(
-        `Video model expects ${this.videoForest.nFeatures} features, app builds ${cfg.FEATURES_PER_VIDEO}.`
+        `Video model expects ${this.videoForest.nFeatures} features (v${this.videoV}), app builds ${wantVideo}.`
       );
     }
 
     this.staticScratch = new Float64Array(this.staticForest.nClasses);
     this.videoScratch = new Float64Array(this.videoForest.nClasses);
-    this.videoInput = new Float32Array(cfg.FEATURES_PER_VIDEO);
+    this.staticInput = new Float32Array(cfg.FEATURES_PER_FRAME);
+    this.videoInput = new Float32Array(wantVideo);
     this.altFeatures = new Float32Array(cfg.FEATURES_PER_FRAME);
     this.reset();
   }
 
   reset() {
-    this.buffer = []; 
-    this.times = []; 
+    this.buffer = [];
+    this.times = [];
     this.recent = [];
     this.lastCommitted = null;
     this.noHandFrames = 0;
@@ -57,10 +63,16 @@ class SignRecognizer {
     const n = buffer.length;
     if (n < cfg.VIDEO_MIN_FRAMES || times[n - 1] - times[0] < cfg.VIDEO_MIN_SPAN_MS) return null;
 
-    const L = cfg.SEQUENCE_LENGTH;
-    for (let k = 0; k < L; k++) {
-      const idx = Math.floor((k * (n - 1)) / (L - 1)); 
-      this.videoInput.set(buffer[idx], k * cfg.FEATURES_PER_FRAME);
+    if (this.videoV === 2) {
+      const seq = new Array(n);
+      for (let i = 0; i < n; i++) seq[i] = buffer[i].recs;
+      if (!videoFeaturesV2(seq, this.videoInput)) return null;
+    } else {
+      const L = cfg.SEQUENCE_LENGTH;
+      for (let k = 0; k < L; k++) {
+        const idx = Math.floor((k * (n - 1)) / (L - 1));
+        this.videoInput.set(buffer[idx].legacy, k * cfg.FEATURES_PER_FRAME);
+      }
     }
     return predict(this.videoForest, this.videoInput, this.videoScratch);
   }
@@ -68,18 +80,18 @@ class SignRecognizer {
   process(result, now) {
     now = now || Date.now();
     const hands = result && result.hands ? result.hands : [];
-    const features = extractTwoHandFeatures(hands, result && result.handedness, cfg.MIRROR_INPUT);
 
-    if (features === null) {
+    if (hands.length === 0) {
       this.noHandFrames++;
       this.recent.push(null);
       if (this.recent.length > cfg.STABLE_WINDOW) this.recent.shift();
-      // Only reset after the hands are really gone, not on one dropped detection.
+
       if (this.noHandFrames >= cfg.NO_HAND_RESET_FRAMES) {
         this._clearWindow();
         this.recent.length = 0;
         this.lastCommitted = null;
       }
+
       return {
         handCount: 0,
         bufferFill: Math.min(this.buffer.length, cfg.SEQUENCE_LENGTH),
@@ -89,19 +101,31 @@ class SignRecognizer {
         committed: null,
       };
     }
+
     this.noHandFrames = 0;
     this.frameNo++;
 
-    let s = predict(this.staticForest, features, this.staticScratch);
-    if (cfg.TRY_BOTH_SLOTS_FOR_ONE_HAND && hands.length === 1) {
-      const alt = this.altFeatures;
-      alt.set(features.subarray(cfg.FEATURES_PER_HAND), 0);
-      alt.set(features.subarray(0, cfg.FEATURES_PER_HAND), cfg.FEATURES_PER_HAND);
-      const s2 = predict(this.staticForest, alt, this.staticScratch);
-      if (s2.confidence > s.confidence) s = s2;
+    const recs = toRecords(hands, result.imageWidth, result.imageHeight);
+    const needLegacy = this.staticV !== 2 || this.videoV !== 2;
+    const features = needLegacy
+      ? extractTwoHandFeatures(hands, result.handedness, cfg.MIRROR_INPUT)
+      : null;
+
+    let s;
+    if (this.staticV === 2) {
+      s = predict(this.staticForest, staticFeaturesV2(recs, this.staticInput), this.staticScratch);
+    } else {
+      s = predict(this.staticForest, features, this.staticScratch);
+      if (cfg.TRY_BOTH_SLOTS_FOR_ONE_HAND && hands.length === 1) {
+        const alt = this.altFeatures;
+        alt.set(features.subarray(cfg.FEATURES_PER_HAND), 0);
+        alt.set(features.subarray(0, cfg.FEATURES_PER_HAND), cfg.FEATURES_PER_HAND);
+        const s2 = predict(this.staticForest, alt, this.staticScratch);
+        if (s2.confidence > s.confidence) s = s2;
+      }
     }
 
-    this.buffer.push(features);
+    this.buffer.push({ legacy: features, recs });
     this.times.push(now);
 
     if (this.frameNo % cfg.VIDEO_STRIDE === 0 || this.lastVideo === null) {
@@ -112,6 +136,7 @@ class SignRecognizer {
     const sOk = s.confidence >= cfg.STATIC_MIN_CONF;
     const vOk = v !== null && v.confidence >= cfg.VIDEO_MIN_CONF;
     let candidate = null;
+
     if (vOk && (!sOk || v.confidence >= s.confidence)) {
       candidate = { label: v.label, confidence: v.confidence, source: 'video' };
     } else if (sOk) {
@@ -124,11 +149,13 @@ class SignRecognizer {
     let committed = null;
     if (candidate && candidate.label !== this.lastCommitted) {
       let votes = 0;
-      for (let i = 0; i < this.recent.length; i++) if (this.recent[i] === candidate.label) votes++;
+      for (let i = 0; i < this.recent.length; i++) {
+        if (this.recent[i] === candidate.label) votes++;
+      }
       if (votes >= cfg.STABLE_VOTES) {
         committed = candidate.label;
         this.lastCommitted = committed;
-        if (candidate.source === 'video') this._clearWindow(); 
+        if (candidate.source === 'video') this._clearWindow();
       }
     }
 
