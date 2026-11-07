@@ -1,7 +1,10 @@
+
+
 const { FEATURES_PER_HAND, FEATURES_PER_FRAME } = require('./config');
 
 function writeHand(hand, mirror, out, offset) {
   const wrist = hand[0];
+
   const sx = mirror ? -1 : 1;
   for (let i = 0; i < 21; i++) {
     const lm = hand[i];
@@ -35,11 +38,13 @@ function extractTwoHandFeatures(hands, handedness, mirror) {
     if (hands.length >= 2) right = hands[1];
   }
 
-  const out = new Float32Array(FEATURES_PER_FRAME);
+  const out = new Float32Array(FEATURES_PER_FRAME); 
   if (left) writeHand(left, mirror, out, 0);
   if (right) writeHand(right, mirror, out, FEATURES_PER_HAND);
   return out;
 }
+
+
 
 function toRecords(hands, width, height) {
   const w = width > 0 ? width : 1;
@@ -80,6 +85,7 @@ function staticFeaturesV2(recs, out) {
   return out;
 }
 
+
 function videoFeaturesV2(seq, out) {
   const L = 20;
   const n = seq.length;
@@ -90,10 +96,7 @@ function videoFeaturesV2(seq, out) {
   let sx = 0, sy = 0, ss = 0, count = 0;
   for (let k = 0; k < L; k++) {
     for (const r of chosen[k]) {
-      sx += r[0];
-      sy += r[1];
-      ss += handScale(r);
-      count++;
+      sx += r[0]; sy += r[1]; ss += handScale(r); count++;
     }
   }
   if (count === 0) return false;
@@ -112,9 +115,4 @@ function videoFeaturesV2(seq, out) {
   return true;
 }
 
-module.exports = {
-  extractTwoHandFeatures,
-  toRecords,
-  staticFeaturesV2,
-  videoFeaturesV2
-};
+module.exports = { extractTwoHandFeatures, toRecords, staticFeaturesV2, videoFeaturesV2 };
