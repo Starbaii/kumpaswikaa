@@ -9,9 +9,8 @@ class SignRecognizer {
 
     this.staticV = this.staticForest.featureVersion;
     this.videoV = this.videoForest.featureVersion;
-    const wantStatic = cfg.FEATURES_PER_FRAME;
+    const wantStatic = cfg.FEATURES_PER_FRAME; // 126 in both versions
     const wantVideo = this.videoV === 2 ? cfg.FEATURES_PER_VIDEO_V2 : cfg.FEATURES_PER_VIDEO;
-
     if (this.staticForest.nFeatures !== wantStatic) {
       throw new Error(
         `Static model expects ${this.staticForest.nFeatures} features, app builds ${wantStatic}.`
@@ -32,13 +31,33 @@ class SignRecognizer {
   }
 
   reset() {
-    this.buffer = [];
-    this.times = [];
+    this.buffer = []; 
+    this.times = []; 
     this.recent = [];
     this.lastCommitted = null;
     this.noHandFrames = 0;
     this.frameNo = 0;
     this.lastVideo = null;
+    this.motionTrail = []; // { t, x, y, s } of the first hand; survives _clearWindow()
+  }
+
+  // How far the wrist travelled over the last MOTION_WINDOW_MS, in hand sizes.
+  _motion(now, recs) {
+    const trail = this.motionTrail;
+    const r = recs[0];
+    const size = Math.hypot(r[27] - r[0], r[28] - r[1], r[29] - r[2]);
+    trail.push({ t: now, x: r[0], y: r[1], s: size > 1e-6 ? size : 1 });
+    while (trail.length > 1 && now - trail[0].t > cfg.MOTION_WINDOW_MS) trail.shift();
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, sum = 0;
+    for (let i = 0; i < trail.length; i++) {
+      const p = trail[i];
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+      sum += p.s;
+    }
+    return Math.hypot(maxX - minX, maxY - minY) / (sum / trail.length);
   }
 
   _clearWindow() {
@@ -80,18 +99,17 @@ class SignRecognizer {
   process(result, now) {
     now = now || Date.now();
     const hands = result && result.hands ? result.hands : [];
-
     if (hands.length === 0) {
       this.noHandFrames++;
       this.recent.push(null);
       if (this.recent.length > cfg.STABLE_WINDOW) this.recent.shift();
-
+      // Only reset after the hands are really gone, not on one dropped detection.
       if (this.noHandFrames >= cfg.NO_HAND_RESET_FRAMES) {
         this._clearWindow();
+        this.motionTrail.length = 0;
         this.recent.length = 0;
         this.lastCommitted = null;
       }
-
       return {
         handCount: 0,
         bufferFill: Math.min(this.buffer.length, cfg.SEQUENCE_LENGTH),
@@ -101,7 +119,6 @@ class SignRecognizer {
         committed: null,
       };
     }
-
     this.noHandFrames = 0;
     this.frameNo++;
 
@@ -127,16 +144,16 @@ class SignRecognizer {
 
     this.buffer.push({ legacy: features, recs });
     this.times.push(now);
+    const moving = this._motion(now, recs) >= cfg.MOTION_GATE;
 
     if (this.frameNo % cfg.VIDEO_STRIDE === 0 || this.lastVideo === null) {
       this.lastVideo = this._videoPrediction(now);
     }
     const v = this.lastVideo;
 
-    const sOk = s.confidence >= cfg.STATIC_MIN_CONF;
+    const sOk = s.confidence >= cfg.STATIC_MIN_CONF && !moving;
     const vOk = v !== null && v.confidence >= cfg.VIDEO_MIN_CONF;
     let candidate = null;
-
     if (vOk && (!sOk || v.confidence >= s.confidence)) {
       candidate = { label: v.label, confidence: v.confidence, source: 'video' };
     } else if (sOk) {
@@ -149,13 +166,11 @@ class SignRecognizer {
     let committed = null;
     if (candidate && candidate.label !== this.lastCommitted) {
       let votes = 0;
-      for (let i = 0; i < this.recent.length; i++) {
-        if (this.recent[i] === candidate.label) votes++;
-      }
+      for (let i = 0; i < this.recent.length; i++) if (this.recent[i] === candidate.label) votes++;
       if (votes >= cfg.STABLE_VOTES) {
         committed = candidate.label;
         this.lastCommitted = committed;
-        if (candidate.source === 'video') this._clearWindow();
+        if (candidate.source === 'video') this._clearWindow(); 
       }
     }
 
@@ -166,6 +181,7 @@ class SignRecognizer {
       video: v,
       candidate,
       committed,
+      moving,
     };
   }
 }
