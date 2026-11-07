@@ -4,7 +4,16 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {
   Camera,
   useCameraDevice,
@@ -21,14 +30,16 @@ import { colors, fonts, radii } from '../theme';
 
 
 const handPlugin = VisionCameraProxy.initFrameProcessorPlugin('handLandmarker', {});
-const STRIDE = Math.max(1, FRAME_STRIDE | 0); // plain number, safe to capture inside the worklet
+const STRIDE = Math.max(1, FRAME_STRIDE | 0); 
 
-const ALLOW_ONLINE_FALLBACK = true; // use online speech recognition when no offline model exists
-const START_TIMEOUT_MS = 5000; // give up if the recognizer never reports 'start'
 
-const dbg = (...a) => console.log('[STT]', ...a); // visible in Metro / adb logcat
+const OFFLINE_ONLY = ['fil-PH'];
+const LOCALE_ALIASES = { 'fil-ph': ['fil-ph', 'tl-ph'] };
+const START_TIMEOUT_MS = 5000; 
+
+const dbg = (...a) => console.log('[STT]', ...a); 
 const normLocale = (l) => String(l).replace('_', '-').toLowerCase();
-// The native offline-model calls have no timeout of their own and can hang on some phones.
+
 const withTimeout = (promise, ms, fallback) =>
   Promise.race([
     Promise.resolve(promise).catch(() => fallback),
@@ -39,13 +50,15 @@ export default function SignCaptureScreen({ navigation, route }) {
   const [language, setLanguage] = useState(route?.params?.language ?? 'tagalog');
   const [facing, setFacing] = useState('front');
   const [autoSpeak, setAutoSpeak] = useState(true);
-  const [transcript, setTranscript] = useState([]); // committed labels
-  const [live, setLive] = useState(null); // numbers for the live card
-  const [micState, setMicState] = useState('idle'); // 'idle' | 'starting' | 'listening'
-  const [replies, setReplies] = useState([]); // committed spoken sentences (speech-to-text)
-  const [interim, setInterim] = useState(''); // in-progress speech while listening
+  const [transcript, setTranscript] = useState([]); 
+  const [live, setLive] = useState(null); 
+  const [micState, setMicState] = useState('idle'); 
+  const [replies, setReplies] = useState([]); 
+  const [interim, setInterim] = useState(''); 
   const [micError, setMicError] = useState(null);
-  const [micMode, setMicMode] = useState(''); // 'offline' | 'online' (shown while listening)
+  const [micMode, setMicMode] = useState(''); 
+  const [micOpen, setMicOpen] = useState(false); 
+  const replyScrollRef = useRef(null);
   const listening = micState === 'listening';
   const starting = micState === 'starting';
 
@@ -56,8 +69,6 @@ export default function SignCaptureScreen({ navigation, route }) {
     { fps: 30 },
   ]);
 
-  // Building the forests from ~10 MB of JSON blocks the JS thread, so do it after the
-  // screen has painted (App.js also preloads it) instead of inside the first render.
   const [loaded, setLoaded] = useState(() => (isRecognizerReady() ? getRecognizer() : null));
   useEffect(() => {
     if (loaded) return undefined;
@@ -69,13 +80,13 @@ export default function SignCaptureScreen({ navigation, route }) {
   const languageRef = useRef(language);
   const autoSpeakRef = useRef(autoSpeak);
   const lastUiRef = useRef(0);
-  const listeningRef = useRef(false); // true while the USER wants the mic on (Start pressed, Stop not yet)
-  const startTokenRef = useRef(0); // invalidates an in-flight Start if the user taps Stop/Cancel
+  const listeningRef = useRef(false);
+  const startTokenRef = useRef(0); 
   const modeRef = useRef({ lang: 'fil-PH', onDevice: false, continuous: true });
-  const restartsRef = useRef([]); // timestamps, to stop a runaway restart loop
+  const restartsRef = useRef([]); 
   const restartTimerRef = useRef(null);
   const interimRef = useRef('');
-  const ignoreEndsRef = useRef(0); // 'end' events caused by our own abort() calls
+  const ignoreEndsRef = useRef(0); 
   const startWatchdogRef = useRef(null);
   languageRef.current = language;
   autoSpeakRef.current = autoSpeak;
@@ -95,13 +106,10 @@ export default function SignCaptureScreen({ navigation, route }) {
     []
   );
 
-  // Switching TL/EN while listening: stop so the next Start uses the new language.
   useEffect(() => {
     if (listeningRef.current) stopListening();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language]);
 
-  // ---- speech-to-text (hearing user replies to the deaf user) -------------
   const startRecognition = (mode) => {
     dbg('start', JSON.stringify(mode));
     clearTimeout(startWatchdogRef.current);
@@ -112,7 +120,6 @@ export default function SignCaptureScreen({ navigation, route }) {
       addsPunctuation: true,
       requiresOnDeviceRecognition: mode.onDevice,
     });
-    // If the recognizer never reports 'start', don't leave the button hanging.
     startWatchdogRef.current = setTimeout(onStartTimeout, START_TIMEOUT_MS);
   };
 
@@ -122,7 +129,6 @@ export default function SignCaptureScreen({ navigation, route }) {
     ignoreEndsRef.current += 1;
     ExpoSpeechRecognitionModule.abort();
     if (modeRef.current.continuous) {
-      // Some phones' recognizers can't use the continuous audio source: retry one phrase at a time.
       modeRef.current = { ...modeRef.current, continuous: false };
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
@@ -148,15 +154,15 @@ export default function SignCaptureScreen({ navigation, route }) {
 
   const stopListening = () => {
     listeningRef.current = false;
-    startTokenRef.current += 1; // cancels a Start that is still waiting on permission/model checks
+    startTokenRef.current += 1; 
     clearTimeout(restartTimerRef.current);
     clearTimeout(startWatchdogRef.current);
-    // keep whatever was already heard, then end the session right away
+  
     const pending = interimRef.current;
     if (pending) setReplies((r) => [...r.slice(-19), pending]);
     interimRef.current = '';
     setInterim('');
-    setMicState('idle'); // update the button immediately
+    setMicState('idle'); 
     ignoreEndsRef.current += 1;
     ExpoSpeechRecognitionModule.abort();
   };
@@ -166,7 +172,7 @@ export default function SignCaptureScreen({ navigation, route }) {
     clearTimeout(startWatchdogRef.current);
     if (!listeningRef.current) {
       ignoreEndsRef.current += 1;
-      ExpoSpeechRecognitionModule.abort(); // user already tapped Stop while it was starting
+      ExpoSpeechRecognitionModule.abort(); 
       return;
     }
     setMicState('listening');
@@ -176,7 +182,7 @@ export default function SignCaptureScreen({ navigation, route }) {
     interimRef.current = '';
     setInterim('');
     if (ignoreEndsRef.current > 0) {
-      ignoreEndsRef.current -= 1; // caused by our own abort()
+      ignoreEndsRef.current -= 1;
       if (!listeningRef.current) setMicState('idle');
       return;
     }
@@ -184,8 +190,7 @@ export default function SignCaptureScreen({ navigation, route }) {
       setMicState('idle');
       return;
     }
-    // The session ended by itself (silence timeout, one phrase finished). The user has not
-    // pressed Stop, so quietly start a new session and keep listening.
+
     const now = Date.now();
     restartsRef.current = restartsRef.current.filter((t) => now - t < 5000);
     if (restartsRef.current.length >= 4) {
@@ -218,13 +223,12 @@ export default function SignCaptureScreen({ navigation, route }) {
   });
   useSpeechRecognitionEvent('error', (event) => {
     dbg('event: error', event.error, event.message);
-    // silence / our own abort are not real failures ('end' restarts or settles the button)
     if (event.error === 'no-speech' || event.error === 'speech-timeout' || event.error === 'aborted') return;
     failMic(
       event.error === 'not-allowed'
         ? 'Microphone permission denied.'
         : event.error === 'language-not-supported'
-        ? 'Speech recognition is not available for this language on this phone.'
+        ? 'Speech recognition is not available for this language on this phone. For Tagalog, install the offline Filipino speech model.'
         : event.error === 'network'
         ? 'Online speech recognition needs an internet connection.'
         : event.error === 'service-not-allowed'
@@ -233,20 +237,17 @@ export default function SignCaptureScreen({ navigation, route }) {
     );
   });
 
-  // Is the offline model for this language already on the phone? Never blocks for long:
-  // the native check has no timeout and can hang on some phones.
   const offlineModelReady = async (lang) => {
-    if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) return false;
+    if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) return null;
     const info = await withTimeout(ExpoSpeechRecognitionModule.getSupportedLocales({}), 1500, null);
-    if (!info) return false;
-    const want = normLocale(lang);
-    return (info.installedLocales ?? []).some((l) => normLocale(l) === want);
+    if (!info) return null;
+    const want = LOCALE_ALIASES[normLocale(lang)] ?? [normLocale(lang)];
+    return (info.installedLocales ?? []).find((l) => want.includes(normLocale(l))) ?? null;
   };
 
-  // One button: tap to start, tap again to stop.
   const toggleListening = async () => {
     if (listeningRef.current) {
-      stopListening(); // also cancels while it is still 'starting'
+      stopListening(); 
       return;
     }
     listeningRef.current = true;
@@ -255,28 +256,38 @@ export default function SignCaptureScreen({ navigation, route }) {
     setMicError(null);
     interimRef.current = '';
     setInterim('');
-    setMicState('starting'); // instant feedback on the button
+    setMicState('starting'); 
 
     try {
-      // microphone only: offline recognition needs no separate speech permission
       const perm = await ExpoSpeechRecognitionModule.requestMicrophonePermissionsAsync();
       if (cancelled()) return;
       if (!perm.granted) return failMic('Microphone permission denied.');
 
       const lang = languageRef.current === 'tagalog' ? 'fil-PH' : 'en-US';
       const langName = lang === 'fil-PH' ? 'Tagalog' : 'English';
-      const onDevice = await offlineModelReady(lang);
+      const installedLocale = await offlineModelReady(lang);
+      const onDevice = !!installedLocale;
       if (cancelled()) return;
 
-      // Prefer fully offline. If this phone has no offline model for the language
-      // (common for Tagalog), fall back to the phone's normal recognizer so the
-      // button still works. Set ALLOW_ONLINE_FALLBACK = false to force offline-only.
       if (!onDevice) {
-        if (!ALLOW_ONLINE_FALLBACK) {
-          // ask Android to fetch the model in the background; never wait on it
-          ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: lang }).catch(() => {});
+        if (OFFLINE_ONLY.includes(lang)) {
+          const dl = await withTimeout(
+            ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: lang }),
+            4000,
+            null
+          );
+          if (cancelled()) return;
+          dbg('offline model download', JSON.stringify(dl));
+          const howTo =
+            'Open the Google app > Settings > Voice > Offline speech recognition and download Filipino, then tap Speak again.';
           return failMic(
-            `The offline ${langName} speech model is not installed. Requested the download - tap Start again when it finishes.`
+            !dl
+              ? `The offline ${langName} speech model is not installed. ${howTo}`
+              : dl.status === 'download_success'
+              ? `The offline ${langName} model finished downloading. Tap Speak again - it now works without internet.`
+              : dl.status === 'download_scheduled'
+              ? `The offline ${langName} model is downloading (it may wait for Wi-Fi). Tap Speak again when it finishes.`
+              : `Tap Download in the dialog to install the offline ${langName} model (needs internet once), then tap Speak again.`
           );
         }
         if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
@@ -286,22 +297,29 @@ export default function SignCaptureScreen({ navigation, route }) {
         }
       }
 
-      Speech.stop(); // don't let the phone's own voice feed back into the mic
-      modeRef.current = { lang, onDevice, continuous: true };
+      Speech.stop();
+      modeRef.current = { lang: installedLocale || lang, onDevice, continuous: true };
       setMicMode(onDevice ? 'offline' : 'online');
       restartsRef.current = [];
       startRecognition(modeRef.current);
-      // the 'start' event flips the button to Stop/listening (watchdog covers the case it never comes)
     } catch (e) {
       failMic(e?.message || 'Could not start speech recognition.');
     }
   };
 
-  // Shared with the frame-processor worklet: 'busy' makes it DROP frames while the JS
-  // thread is still working, so results never queue up and lag behind the camera.
+  const openSpeak = () => {
+    setMicOpen(true);
+    if (!listeningRef.current) toggleListening();
+  };
+  const closeSpeak = () => {
+    if (listeningRef.current) stopListening();
+    setMicOpen(false);
+    setMicError(null);
+  };
+
+ 
   const busy = useMemo(() => Worklets.createSharedValue(false), []);
   const frameCounter = useMemo(() => Worklets.createSharedValue(0), []);
-  // JS side of every camera frame that made it past the throttle below.
   const lastShownRef = useRef('');
   const handleResult = useCallback((result) => {
     try {
@@ -321,8 +339,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         }
       }
 
-      // Re-rendering the whole screen is expensive: only do it a few times a second,
-      // and only when something visible actually changed.
+   
       if (now - lastUiRef.current >= UI_INTERVAL_MS) {
         const c = out.candidate;
         const key = [
@@ -347,7 +364,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         }
       }
     } finally {
-      busy.value = false; // let the camera thread send the next frame
+      busy.value = false; 
     }
   }, []);
 
@@ -369,7 +386,7 @@ export default function SignCaptureScreen({ navigation, route }) {
     [onResult, busy, frameCounter]
   );
 
-  // Reads the signed sentence out loud (this used to be the Speak button).
+
   const speakAll = () => {
     if (transcript.length === 0) return;
     Speech.stop();
@@ -378,7 +395,7 @@ export default function SignCaptureScreen({ navigation, route }) {
     });
   };
 
-  // camera perms before start
+  // camera permission before start
   if (!hasPermission) {
     return (
       <View style={[styles.container, styles.center]}>
@@ -508,19 +525,6 @@ export default function SignCaptureScreen({ navigation, route }) {
           {transcript.length ? transcript.map((l) => labelText(l, language)).join(' · ') : ' '}
         </Text>
 
-        {/* hearing user's spoken reply (speech-to-text), for the deaf user to read */}
-        <Text style={styles.meta}>{listening ? `LISTENING… (${micMode})` : starting ? 'STARTING…' : 'REPLY'}</Text>
-        <Text style={styles.reply} numberOfLines={3}>
-          {interim
-            ? interim
-            : replies.length
-            ? replies.slice(-3).join(' · ')
-            : listening
-            ? 'Speak now…'
-            : ' '}
-        </Text>
-        {micError ? <Text style={styles.errorText}>{micError}</Text> : null}
-
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.secondaryButton}
@@ -538,14 +542,64 @@ export default function SignCaptureScreen({ navigation, route }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.primaryButtonSmall, (listening || starting) && styles.listeningButton]}
-            onPress={toggleListening}
+            onPress={openSpeak}
           >
-            <Text style={styles.primaryButtonText}>
-              {listening ? '⏹ Stop' : starting ? '⏹ Cancel' : '🎤 Start'}
-            </Text>
+            <Text style={styles.primaryButtonText}>🎤 Speak</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* speech-to-text pop-up: what the hearing person says shows up here */}
+      <Modal visible={micOpen} transparent animationType="fade" onRequestClose={closeSpeak}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.meta}>
+              {listening ? `LISTENING… (${micMode})` : starting ? 'STARTING…' : 'SPEECH TO TEXT'}
+            </Text>
+            <ScrollView
+              ref={replyScrollRef}
+              style={styles.modalScroll}
+              onContentSizeChange={() => replyScrollRef.current?.scrollToEnd({ animated: true })}
+            >
+              {replies.map((r, i) => (
+                <Text key={i} style={styles.replyLine}>
+                  {r}
+                </Text>
+              ))}
+              {interim ? <Text style={[styles.replyLine, styles.interimLine]}>{interim}</Text> : null}
+              {!replies.length && !interim ? (
+                <Text style={[styles.replyLine, styles.interimLine]}>
+                  {listening ? 'Speak now…' : starting ? ' ' : 'Tap Speak to start listening.'}
+                </Text>
+              ) : null}
+            </ScrollView>
+            {micError ? <Text style={styles.errorText}>{micError}</Text> : null}
+            <View style={styles.row}>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => {
+                  setReplies([]);
+                  setInterim('');
+                  setMicError(null);
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Clear</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.primaryButtonSmall, (listening || starting) && styles.listeningButton]}
+                onPress={toggleListening}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {listening ? '⏹ Stop' : starting ? '⏹ Cancel' : '🎤 Speak'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryButton} onPress={closeSpeak}>
+                <Text style={styles.secondaryButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -650,4 +704,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    backgroundColor: colors.navy,
+    borderRadius: radii.card,
+    padding: 20,
+  },
+  modalScroll: { maxHeight: 280, minHeight: 120, marginBottom: 14 },
+  replyLine: { fontFamily: fonts.bodyBold, fontSize: 20, color: colors.white, marginBottom: 8 },
+  interimLine: { opacity: 0.65 },
 });
