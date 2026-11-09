@@ -87,7 +87,7 @@ function getHandLandmarkerPluginKotlin(packageName, options) {
                 } else {
                 val poseResult = pl.detectForVideo(mpImage, timestampMs)
                 if (poseResult.landmarks().isNotEmpty()) {
-                    val posePoints = mutableListOf>()
+                    val posePoints = mutableListOf<Map<String, Double>>()
                     for (lm in poseResult.landmarks()[0]) {
                         val point = hashMapOf(
                             "x" to lm.x().toDouble(),
@@ -124,7 +124,7 @@ function getHandLandmarkerPluginKotlin(packageName, options) {
                 } else {
                 val faceResult = fl.detectForVideo(mpImage, timestampMs)
                 if (faceResult.faceLandmarks().isNotEmpty()) {
-                    val facePoints = mutableListOf>()
+                    val facePoints = mutableListOf<Map<String, Double>>()
                     for (lm in faceResult.faceLandmarks()[0]) {
                         facePoints.add(hashMapOf(
                             "x" to lm.x().toDouble(),
@@ -180,8 +180,8 @@ ${poseField}${faceField}    private var initError: String? = null
     private var reusableRaw: Bitmap? = null
 
     private var frameCounter = 0L
-    private var lastPosePoints: List>? = null
-    private var lastFacePoints: List>? = null
+    private var lastPosePoints: List<Map<String, Double>>? = null
+    private var lastFacePoints: List<Map<String, Double>>? = null
 
     private val appContext = proxy.context
 
@@ -343,9 +343,9 @@ ${poseInit}${faceInit}        } catch (t: Throwable) {
 
             output["delegates"] = HashMap(delegatesUsed)
 
-            val handsArray = mutableListOf<List>>()
+            val handsArray = mutableListOf<List<Map<String, Double>>>()
             for (hand in result.landmarks()) {
-                val points = mutableListOf>()
+                val points = mutableListOf<Map<String, Double>>()
                 for (landmark in hand) {
                     points.add(hashMapOf(
                         "x" to landmark.x().toDouble(),
@@ -357,9 +357,9 @@ ${poseInit}${faceInit}        } catch (t: Throwable) {
             }
             output["hands"] = handsArray
 
-            val handednessArray = mutableListOf<List>>()
+            val handednessArray = mutableListOf<List<Map<String, Any>>>()
             for (categories in result.handednesses()) {
-                val categoryList = mutableListOf>()
+                val categoryList = mutableListOf<Map<String, Any>>()
                 for (category in categories) {
                     categoryList.add(hashMapOf(
                         "categoryName" to (category.categoryName() ?: "Unknown") as Any,
