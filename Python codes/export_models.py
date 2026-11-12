@@ -1,3 +1,21 @@
+"""
+export_models.py
+----------------
+Converts your trained scikit-learn Random Forest .pkl files into compact JSON
+files that the KumpasWika app can run fully offline (no Python, no server).
+
+Usage (run on your PC, inside the Capstone folder where the .pkl files are):
+
+    python export_models.py --static fsl_static_model.pkl --video fsl_video_model.pkl --out ../assets/models
+
+Options:
+    --max-trees N    keep only the first N trees (smaller APK, slightly less accurate)
+    --decimals D     decimals kept for thresholds (default 6)
+
+It also writes <name>_tests.json: sample inputs + what scikit-learn predicted,
+so you can run  node tools/test_inference.js  to prove the app code gives the
+same answers as your Python model.
+"""
 import argparse
 import json
 import os
@@ -52,6 +70,7 @@ def export_forest(model, decimals, max_trees):
         "classes": classes,
         "nClasses": n_classes,
         "nFeatures": int(model.n_features_in_),
+        "featureVersion": int(getattr(model, "feature_version", 1)),
         "trees": trees,
     }
 
@@ -81,14 +100,17 @@ def process(path, name, out_dir, decimals, max_trees):
 
     js = export_forest(model, decimals, max_trees)
     print(f"classes ({js['nClasses']}): {js['classes']}")
-    print(f"features: {js['nFeatures']}   trees: {len(js['trees'])}")
+    print(f"features: {js['nFeatures']}   trees: {len(js['trees'])}   feature version: {js['featureVersion']}")
 
+    # ---- self-check against scikit-learn
     rng = np.random.default_rng(0)
     n_feat = js["nFeatures"]
     X = rng.uniform(-0.6, 0.6, size=(300, n_feat))
+    # make half of the samples look like a single hand (second hand all zeros)
     X[::2, n_feat // 2:] = 0.0
     sk_proba = model.predict_proba(X)
     if max_trees:
+        # sklearn can't use a subset easily; compare labels only when trees are kept whole
         sk_proba = np.mean([e.predict_proba(X) for e in model.estimators_[:max_trees]], axis=0)
     js_proba = np.array([predict_proba_json(js, x) for x in X])
     max_diff = float(np.abs(sk_proba - js_proba).max())
@@ -101,8 +123,8 @@ def process(path, name, out_dir, decimals, max_trees):
         json.dump(js, fh, separators=(",", ":"))
     size_mb = os.path.getsize(out_path) / (1024 * 1024)
     print(f"wrote {out_path}  ({size_mb:.2f} MB)")
-    if size_mb > 25:
-        print("  WARNING: large file. Re-run with --max-trees 100 to shrink it.")
+    if size_mb > 100:
+        print("  WARNING: over 100 MB. Re-run with --max-trees 100 to shrink it.")
 
     tests = {
         "classes": js["classes"],
@@ -126,4 +148,4 @@ if __name__ == "__main__":
     a = ap.parse_args()
     process(a.static, "fsl_static_model", a.out, a.decimals, a.max_trees)
     process(a.video, "fsl_video_model", a.out, a.decimals, a.max_trees)
-    print("\nDone!")
+    print("\nDone. Copy hand_landmarker.task into assets/ as well (same file you trained with).")
