@@ -1,467 +1,79 @@
-# to run type train_static.py in the cmd
-import os
-import cv2
-import numpy as np
-import mediapipe as mp
-import joblib
+"""
+Step 2a.  python train_static_v2.py      (run extract_landmarks.py first)
 
+Static (single image / held pose) model.  Same Random Forest as before, but with
+feature version 2 and augmentation (mirror, small 3D rotations, landmark jitter).
+The held-out images are never augmented, so the accuracy printed is honest.
+"""
+import argparse
+import joblib
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 
-# Settings
-
-
-DATASET_DIR = "Dataset"
-MODEL_FILE = "fsl_static_model.pkl"
-HAND_MODEL = "hand_landmarker.task"
-
-NUM_HANDS = 2
-
-LANDMARKS_PER_HAND = 21
-VALUES_PER_LANDMARK = 3
-
-FEATURES_PER_HAND = (
-    LANDMARKS_PER_HAND * VALUES_PER_LANDMARK
-)
-
-FEATURES_PER_IMAGE = (
-    FEATURES_PER_HAND * NUM_HANDS
-)
-
-
-# Check Files
-
-if not os.path.exists(DATASET_DIR):
-    print("ERROR: Dataset folder was not found.")
-    exit()
-
-if not os.path.exists(HAND_MODEL):
-    print("ERROR: hand_landmarker.task was not found.")
-    exit()
-
-
-
-# Mediapipe
-
-
-BaseOptions = mp.tasks.BaseOptions
-
-HandLandmarker = mp.tasks.vision.HandLandmarker
-
-HandLandmarkerOptions = (
-    mp.tasks.vision.HandLandmarkerOptions
-)
-
-VisionRunningMode = (
-    mp.tasks.vision.RunningMode
-)
-
-
-options = HandLandmarkerOptions(
-    base_options=BaseOptions(
-        model_asset_path=HAND_MODEL
-    ),
-    running_mode=VisionRunningMode.IMAGE,
-    num_hands=NUM_HANDS,
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5,
-    min_tracking_confidence=0.5
-)
-
-
-
-# Get Features from one hand
-
-
-def get_hand_features(hand):
-
-    wrist = hand[0]
-
-    features = []
-
-    for landmark in hand:
-
-        x = landmark.x - wrist.x
-        y = landmark.y - wrist.y
-        z = landmark.z - wrist.z
-
-        features.extend([
-            x,
-            y,
-            z
-        ])
-
-    return features
-
-
-
-# Get Features of for the two hands
-
-
-def extract_landmarks(image, detector):
-
-    rgb_image = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2RGB
-    )
-
-    mp_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
-        data=rgb_image
-    )
-
-    result = detector.detect(mp_image)
-
-    if not result.hand_landmarks:
-        return None
-
-    hands = result.hand_landmarks
-
-    left_hand = None
-    right_hand = None
-
-
-    
-    # For identifying left and right hands
-  
-
-    if result.handedness:
-
-        for i, handedness_list in enumerate(
-            result.handedness
-        ):
-
-            if i >= len(hands):
-                continue
-
-            if not handedness_list:
-                continue
-
-            category = handedness_list[0]
-
-            if category.category_name == "Left":
-                left_hand = hands[i]
-
-            elif category.category_name == "Right":
-                right_hand = hands[i]
-
-
-    # Fallback
-
-
-    if left_hand is None and right_hand is None:
-
-        if len(hands) >= 1:
-            left_hand = hands[0]
-
-        if len(hands) >= 2:
-            right_hand = hands[1]
-
-
-    
-    # Left 
-    
-
-    features = []
-
-    if left_hand is not None:
-
-        features.extend(
-            get_hand_features(left_hand)
-        )
-
-    else:
-
-        features.extend(
-            [0.0] * FEATURES_PER_HAND
-        )
-
-
-    # --------------------------------------------------------
-    # RIGHT HAND
-    # --------------------------------------------------------
-
-    if right_hand is not None:
-
-        features.extend(
-            get_hand_features(right_hand)
-        )
-
-    else:
-
-        features.extend(
-            [0.0] * FEATURES_PER_HAND
-        )
-
-
-    return features
-
-
-
-# Load Dataset
-
-
-X = []
-y = []
-
-print()
-print("========================================")
-print("LOADING IMAGE DATASET")
-print("========================================")
-
-
-with HandLandmarker.create_from_options(
-    options
-) as detector:
-
-    for label in sorted(
-        os.listdir(DATASET_DIR)
-    ):
-
-        folder = os.path.join(
-            DATASET_DIR,
-            label
-        )
-
-        if not os.path.isdir(folder):
-            continue
-
-        print()
-        print("Class:", label)
-
-        total_images = 0
-        valid_images = 0
-
-
-        for filename in sorted(
-            os.listdir(folder)
-        ):
-
-            if not filename.lower().endswith(
-                (
-                    ".jpg",
-                    ".jpeg",
-                    ".png",
-                    ".webp"
-                )
-            ):
-                continue
-
-            image_path = os.path.join(
-                folder,
-                filename
-            )
-
-            image = cv2.imread(
-                image_path
-            )
-
-            if image is None:
-                print(
-                    "Could not read:",
-                    filename
-                )
-                continue
-
-            total_images += 1
-
-            features = extract_landmarks(
-                image,
-                detector
-            )
-
-            if features is None:
-
-                print(
-                    "No hand detected:",
-                    filename
-                )
-
-                continue
-
-            if len(features) != FEATURES_PER_IMAGE:
-
-                print(
-                    "Wrong feature size:",
-                    filename
-                )
-
-                continue
-
-            X.append(features)
-            y.append(label)
-
-            valid_images += 1
-
-
-        print(
-            f"Images: {total_images} | "
-            f"Valid: {valid_images}"
-        )
-
-
-
-# Check Data
-
-
-if len(X) == 0:
-
-    print()
-    print("ERROR: No valid training images found.")
-    exit()
-
-
-X = np.array(X)
-y = np.array(y)
-
-
-print()
-print("========================================")
-print("DATASET INFORMATION")
-print("========================================")
-
-print("Samples:", len(X))
-print("Features:", X.shape[1])
-print("Expected:", FEATURES_PER_IMAGE)
-print("Classes:", sorted(set(y)))
-
-
-# Check class counts
-
-
-unique_classes, class_counts = np.unique(
-    y,
-    return_counts=True
-)
-
-print()
-print("Class counts:")
-
-for class_name, count in zip(
-    unique_classes,
-    class_counts
-):
-
-    print(
-        f"  {class_name}: {count}"
-    )
-
-
-if len(unique_classes) < 2:
-
-    print()
-    print(
-        "ERROR: You need at least 2 classes "
-        "to train the classifier."
-    )
-
-    exit()
-
-
-if np.min(class_counts) < 2:
-
-    print()
-    print(
-        "ERROR: Every class needs at least "
-        "2 images for the train/test split."
-    )
-
-    exit()
-
-
-# Train or test split
-
-
-X_train, X_test, y_train, y_test = (
-    train_test_split(
-        X,
-        y,
-        test_size=0.20,
-        random_state=42,
-        stratify=y
-    )
-)
-
-
-print()
-print("Training samples:", len(X_train))
-print("Testing samples:", len(X_test))
-
-
-# Train model
-
-
-print()
-print("Training static Random Forest model...")
-
-
-model = RandomForestClassifier(
-    n_estimators=300,
-    random_state=42,
-    n_jobs=-1
-)
-
-
-model.fit(
-    X_train,
-    y_train
-)
-
-
-# Test
-
-predictions = model.predict(
-    X_test
-)
-
-
-accuracy = accuracy_score(
-    y_test,
-    predictions
-)
-
-
-print()
-print("========================================")
-print("STATIC MODEL RESULTS")
-print("========================================")
-
-print(
-    f"Accuracy: {accuracy * 100:.2f}%"
-)
-
-print()
-print(
-    classification_report(
-        y_test,
-        predictions,
-        zero_division=0
-    )
-)
-
-
-# Save
-
-joblib.dump(
-    model,
-    MODEL_FILE
-)
-
-
-print()
-print("========================================")
-print("STATIC MODEL SAVED")
-print("========================================")
-
-print(
-    "File:",
-    MODEL_FILE
-)
-
-print(
-    "Features:",
-    FEATURES_PER_IMAGE
-)
-
-print("========================================")
+import fsl_features as F
+from fsl_train_utils import split_per_class, tag_and_report, print_confusions
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--cache", default="cache_static.pkl")
+ap.add_argument("--out", default="fsl_static_model.pkl")
+ap.add_argument("--aug", type=int, default=6, help="training copies per image (1 = no augmentation)")
+ap.add_argument("--trees", type=int, default=200)
+ap.add_argument("--leaf", type=int, default=2, help="min_samples_leaf (bigger = smaller, smoother model)")
+ap.add_argument("--test", type=float, default=0.2)
+ap.add_argument("--seed", type=int, default=42)
+ap.add_argument("--no-final-fit", action="store_true", help="ship the model trained WITHOUT the held-out images")
+a = ap.parse_args()
+
+rng = np.random.default_rng(a.seed)
+items = [v for v in joblib.load(a.cache)["items"].values() if v["hands"]]
+if not items:
+    raise SystemExit("No images with a detected hand in the cache.")
+labels = np.array([v["label"] for v in items])
+classes, counts = np.unique(labels, return_counts=True)
+print("Images with a hand:", len(items), "| classes:", len(classes))
+for c, n in zip(classes, counts):
+    print(f"  {c}: {n}")
+if len(classes) < 2 or counts.min() < 2:
+    raise SystemExit("Need >= 2 classes and >= 2 usable images per class.")
+
+recs = [F.to_records(v["hands"], v["w"], v["h"]) for v in items]
+
+
+def build(indices, aug):
+    X, y = [], []
+    for i in indices:
+        X.append(F.static_features(recs[i])); y.append(labels[i])
+        for k in range(1, aug):
+            T = F.random_transform(rng, mirror=(True if k == 1 else None))
+            X.append(F.static_features(F.apply_transform(recs[i], T, rng))); y.append(labels[i])
+    return np.array(X, dtype=np.float32), np.array(y)
+
+
+def make_model():
+    return RandomForestClassifier(n_estimators=a.trees, min_samples_leaf=a.leaf, class_weight="balanced_subsample",
+                                  random_state=a.seed, n_jobs=-1)
+
+
+tr, te = split_per_class(labels, a.test, rng)
+Xtr, ytr = build(tr, a.aug)
+Xte, yte = build(te, 1)
+mirror_T = {"R": np.diag([-1.0, 1.0, 1.0]), "noise": 0.0}
+Xte_m = np.array([F.static_features(F.apply_transform(recs[i], mirror_T, rng)) for i in te], dtype=np.float32)
+print(f"\ntrain {len(tr)} images -> {len(Xtr)} samples | held-out {len(te)} images")
+
+model = make_model().fit(Xtr, ytr)
+pred = model.predict(Xte)
+print("\n==== held-out accuracy ====")
+print(f"normal : {accuracy_score(yte, pred) * 100:.2f}%")
+print(f"mirrored: {accuracy_score(yte, model.predict(Xte_m)) * 100:.2f}%   (should be close to 'normal')")
+print(classification_report(yte, pred, zero_division=0))
+print_confusions(yte, pred)
+
+if not a.no_final_fit:
+    Xall, yall = build(np.arange(len(items)), a.aug)
+    model = make_model().fit(Xall, yall)
+    print("\nFinal model trained on ALL images.")
+tag_and_report(model, "static")
+joblib.dump(model, a.out)
+print("saved", a.out)
