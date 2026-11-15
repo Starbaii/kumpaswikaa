@@ -4,7 +4,6 @@ const { FEATURES_PER_HAND, FEATURES_PER_FRAME } = require('./config');
 
 function writeHand(hand, mirror, out, offset) {
   const wrist = hand[0];
-
   const sx = mirror ? -1 : 1;
   for (let i = 0; i < 21; i++) {
     const lm = hand[i];
@@ -14,6 +13,7 @@ function writeHand(hand, mirror, out, offset) {
     out[o + 2] = lm.z - wrist.z;
   }
 }
+
 
 function extractTwoHandFeatures(hands, handedness, mirror) {
   if (!hands || hands.length === 0) return null;
@@ -43,7 +43,6 @@ function extractTwoHandFeatures(hands, handedness, mirror) {
   if (right) writeHand(right, mirror, out, FEATURES_PER_HAND);
   return out;
 }
-
 
 
 function toRecords(hands, width, height) {
