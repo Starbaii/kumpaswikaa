@@ -128,30 +128,34 @@ class SignRecognizer {
       ? extractTwoHandFeatures(hands, result.handedness, cfg.MIRROR_INPUT)
       : null;
 
-    let s;
-    if (this.staticV === 2) {
-      s = predict(this.staticForest, staticFeaturesV2(recs, this.staticInput), this.staticScratch);
-    } else {
-      s = predict(this.staticForest, features, this.staticScratch);
-      if (cfg.TRY_BOTH_SLOTS_FOR_ONE_HAND && hands.length === 1) {
-        const alt = this.altFeatures;
-        alt.set(features.subarray(cfg.FEATURES_PER_HAND), 0);
-        alt.set(features.subarray(0, cfg.FEATURES_PER_HAND), cfg.FEATURES_PER_HAND);
-        const s2 = predict(this.staticForest, alt, this.staticScratch);
-        if (s2.confidence > s.confidence) s = s2;
-      }
-    }
-
     this.buffer.push({ legacy: features, recs });
     this.times.push(now);
     const moving = this._motion(now, recs) >= cfg.MOTION_GATE;
+
+    // The static (letter) model is ignored while the hand is moving (see sOk below), so
+    // don't spend a 200-tree forest pass on it for those frames. `static` is null then.
+    let s = null;
+    if (!moving) {
+      if (this.staticV === 2) {
+        s = predict(this.staticForest, staticFeaturesV2(recs, this.staticInput), this.staticScratch);
+      } else {
+        s = predict(this.staticForest, features, this.staticScratch);
+        if (cfg.TRY_BOTH_SLOTS_FOR_ONE_HAND && hands.length === 1) {
+          const alt = this.altFeatures;
+          alt.set(features.subarray(cfg.FEATURES_PER_HAND), 0);
+          alt.set(features.subarray(0, cfg.FEATURES_PER_HAND), cfg.FEATURES_PER_HAND);
+          const s2 = predict(this.staticForest, alt, this.staticScratch);
+          if (s2.confidence > s.confidence) s = s2;
+        }
+      }
+    }
 
     if (this.frameNo % cfg.VIDEO_STRIDE === 0 || this.lastVideo === null) {
       this.lastVideo = this._videoPrediction(now);
     }
     const v = this.lastVideo;
 
-    const sOk = s.confidence >= cfg.STATIC_MIN_CONF && !moving;
+    const sOk = s !== null && s.confidence >= cfg.STATIC_MIN_CONF;
     const vOk = v !== null && v.confidence >= cfg.VIDEO_MIN_CONF;
     let candidate = null;
     if (vOk && (!sOk || v.confidence >= s.confidence)) {
