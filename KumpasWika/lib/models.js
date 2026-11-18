@@ -1,7 +1,7 @@
-
 const { SignRecognizer } = require('./recognizer');
 
 let cached = null;
+
 
 function loadBundled() {
   let staticJson = null;
@@ -33,4 +33,14 @@ function getRecognizer() {
   return cached;
 }
 
-module.exports = { getRecognizer };
+function isRecognizerReady() {
+  return cached !== null;
+}
+
+// Fire-and-forget; safe to call many times.
+function preloadRecognizer(delayMs = 300) {
+  if (cached) return;
+  setTimeout(getRecognizer, delayMs);
+}
+
+module.exports = { getRecognizer, isRecognizerReady, preloadRecognizer };
