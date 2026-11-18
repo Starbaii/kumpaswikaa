@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -26,11 +27,13 @@ import { Worklets } from 'react-native-worklets-core';
 import { FRAME_STRIDE, SEQUENCE_LENGTH, UI_INTERVAL_MS } from '../lib/config';
 import { labelText } from '../lib/labels';
 import { getRecognizer, isRecognizerReady } from '../lib/models';
+import { buildWords } from '../lib/sentence';
 import { colors, fonts, radii } from '../theme';
 
 
 const handPlugin = VisionCameraProxy.initFrameProcessorPlugin('handLandmarker', {});
 const STRIDE = Math.max(1, FRAME_STRIDE | 0); 
+const TRANSCRIPT_COLLAPSED_HEIGHT = 112; // about two rows of word chips
 
 
 const OFFLINE_ONLY = ['fil-PH'];
@@ -59,6 +62,10 @@ export default function SignCaptureScreen({ navigation, route }) {
   const [micMode, setMicMode] = useState(''); 
   const [micOpen, setMicOpen] = useState(false); 
   const replyScrollRef = useRef(null);
+  const transcriptScrollRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
+  const { height: screenHeight } = useWindowDimensions();
+  const words = useMemo(() => buildWords(transcript, language), [transcript, language]);
   const listening = micState === 'listening';
   const starting = micState === 'starting';
 
@@ -330,7 +337,7 @@ export default function SignCaptureScreen({ navigation, route }) {
 
       if (out.committed) {
         const label = out.committed;
-        setTranscript((t) => [...t.slice(-19), label]);
+        setTranscript((t) => [...t.slice(-99), label]);
         if (autoSpeakRef.current && !listeningRef.current) {
           Speech.stop();
           Speech.speak(labelText(label, languageRef.current), {
@@ -345,6 +352,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         const key = [
           out.handCount,
           out.bufferFill,
+          out.unavailable ? 'U' : '',
           c ? c.label + Math.round(c.confidence * 100) + c.source : '',
           out.static ? out.static.label + Math.round(out.static.confidence * 100) : '',
           out.video ? out.video.label + Math.round(out.video.confidence * 100) : '',
@@ -357,6 +365,7 @@ export default function SignCaptureScreen({ navigation, route }) {
             handCount: out.handCount,
             bufferFill: out.bufferFill,
             candidate: out.candidate,
+            unavailable: !!out.unavailable,
             rawStatic: out.static,
             rawVideo: out.video,
             error: result && result.error,
@@ -461,8 +470,11 @@ export default function SignCaptureScreen({ navigation, route }) {
   }
 
   const cand = live && live.candidate;
+  const unavailable = !!(live && live.unavailable && !cand);
   const mainText = cand
     ? labelText(cand.label, language)
+    : unavailable
+    ? 'Gesture not available'
     : live && live.handCount > 0
     ? 'Reading…'
     : 'Show your hands';
@@ -474,7 +486,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         device={device}
         format={format}
         isActive
-        pixelFormat="rgb" // required by the MediaPipe plugin
+        pixelFormat="rgb" 
         fps={format ? Math.min(30, format.maxFps) : 30}
         frameProcessor={frameProcessor}
       />
@@ -516,14 +528,54 @@ export default function SignCaptureScreen({ navigation, route }) {
             {live.rawVideo ? `   V: ${live.rawVideo.label} ${Math.round(live.rawVideo.confidence * 100)}%` : ''}
           </Text>
         ) : null}
-        <Text style={styles.mainText} numberOfLines={1} adjustsFontSizeToFit>
+        <Text
+          style={[styles.mainText, unavailable && styles.mainTextUnavailable]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {unavailable ? '⚠ ' : ''}
           {mainText}
         </Text>
+        {unavailable ? (
+          <Text style={styles.unavailableHint}>
+            This sign isn't in the model yet. Try another sign or check the Phrasebook.
+          </Text>
+        ) : null}
         {live && live.error ? <Text style={styles.errorText}>{String(live.error)}</Text> : null}
 
-        <Text style={styles.transcript} numberOfLines={2}>
-          {transcript.length ? transcript.map((l) => labelText(l, language)).join(' · ') : ' '}
-        </Text>
+        {/* transcript: one chip per word, newest highlighted, always scrolled to the latest */}
+        <View style={styles.transcriptHeader}>
+          <Text style={styles.meta}>
+            TRANSCRIPT{words.length ? ` · ${words.length} ${words.length === 1 ? 'WORD' : 'WORDS'}` : ''}
+          </Text>
+          <TouchableOpacity onPress={() => setExpanded((e) => !e)} hitSlop={10}>
+            <Text style={styles.expandText}>{expanded ? '⤡ Collapse' : '⤢ Expand'}</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          ref={transcriptScrollRef}
+          style={[
+            styles.transcriptBox,
+            { height: expanded ? Math.round(screenHeight * 0.4) : TRANSCRIPT_COLLAPSED_HEIGHT },
+          ]}
+          contentContainerStyle={styles.transcriptContent}
+          onContentSizeChange={() => transcriptScrollRef.current?.scrollToEnd({ animated: true })}
+          showsVerticalScrollIndicator
+          nestedScrollEnabled
+        >
+          {words.length === 0 ? (
+            <Text style={styles.transcriptEmpty}>Signs you make will appear here.</Text>
+          ) : (
+            words.map((w, i) => {
+              const latest = i === words.length - 1;
+              return (
+                <View key={i} style={[styles.wordChip, latest && styles.wordChipLatest]}>
+                  <Text style={[styles.wordText, latest && styles.wordTextLatest]}>{w}</Text>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
 
         <View style={styles.row}>
           <TouchableOpacity
@@ -687,6 +739,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   mainText: { fontFamily: fonts.heading, fontSize: 34, color: colors.white, marginBottom: 6 },
+  mainTextUnavailable: { color: '#FFB74D', fontSize: 26 },
+  unavailableHint: { fontFamily: fonts.body, fontSize: 12, color: '#FFD9A0', marginBottom: 8 },
   errorText: { fontFamily: fonts.body, fontSize: 10, color: '#FFB4B4', marginBottom: 6 },
   transcript: {
     fontFamily: fonts.body,
@@ -696,6 +750,41 @@ const styles = StyleSheet.create({
     minHeight: 36,
     marginBottom: 10,
   },
+  transcriptHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  expandText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white, opacity: 0.9 },
+  transcriptBox: {
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderRadius: 14,
+    marginBottom: 12,
+  },
+  transcriptContent: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 8,
+  },
+  transcriptEmpty: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.white,
+    opacity: 0.6,
+    padding: 4,
+  },
+  wordChip: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  wordChipLatest: { backgroundColor: colors.gold },
+  wordText: { fontFamily: fonts.bodyBold, fontSize: 20, color: colors.white },
+  wordTextLatest: { color: colors.textDark },
   reply: {
     fontFamily: fonts.bodyBold,
     fontSize: 18,
