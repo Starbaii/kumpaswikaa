@@ -85,13 +85,51 @@ function fromLegacy(js) {
   return { feat, thr, right, roots, leafStart, leafCls, leafP };
 }
 
-function loadForest(js) {
+// Labels that are almost certainly the same sign recorded under two names.
+// Used only to add probabilities together (see buildGroups). Edit as needed.
+const CLASS_ALIASES = {
+  "i_don't_know": "don't_know",
+  "i_don't_understand": "don't_understand",
+  i_understand: 'understand',
+};
+
+const canonical = (label) => {
+  const s = String(label).toLowerCase().replace(/[\s-]+/g, '_');
+  return CLASS_ALIASES[s] || s;
+};
+
+// Maps every class index to a group index. Classes that normalise to the same name share
+// a group; a group of one keeps its original label (so single letters keep their case).
+function buildGroups(classes, merge) {
+  const names = classes.map((c) => (merge ? canonical(c) : String(c)));
+  const order = [];
+  const groupOf = new Int16Array(classes.length);
+  const first = [];
+  const size = [];
+  for (let i = 0; i < names.length; i++) {
+    let g = order.indexOf(names[i]);
+    if (g < 0) {
+      g = order.length;
+      order.push(names[i]);
+      first.push(i);
+      size.push(0);
+    }
+    groupOf[i] = g;
+    size[g]++;
+  }
+  const labels = order.map((n, g) => (size[g] === 1 ? String(classes[first[g]]) : n));
+  return { labels, groupOf, nGroups: labels.length };
+}
+
+function loadForest(js, merge) {
   if (!js || js.type !== 'random_forest' || !(Array.isArray(js.trees) || js.format === 'flat')) {
     throw new Error('Model JSON is not an exported random_forest.');
   }
   const arrays = js.format === 'flat' ? fromFlat(js) : fromLegacy(js);
+  const groups = buildGroups(js.classes, merge !== false);
   return {
     classes: js.classes,
+    groups,
     nClasses: js.nClasses,
     nFeatures: js.nFeatures,
     featureVersion: js.featureVersion || (js.nFeatures === 2600 ? 2 : 1),
@@ -124,9 +162,18 @@ function predictProba(forest, x, out) {
 
 function predict(forest, x, scratch) {
   const proba = predictProba(forest, x, scratch);
+  const { groupOf, labels, nGroups } = forest.groups;
+  if (nGroups === proba.length) {
+    let best = 0;
+    for (let c = 1; c < proba.length; c++) if (proba[c] > proba[best]) best = c;
+    return { label: forest.classes[best], confidence: proba[best] };
+  }
+  // Some classes share a group: add their probabilities, then take the best group.
+  const sums = new Float64Array(nGroups);
+  for (let c = 0; c < proba.length; c++) sums[groupOf[c]] += proba[c];
   let best = 0;
-  for (let c = 1; c < proba.length; c++) if (proba[c] > proba[best]) best = c;
-  return { label: forest.classes[best], confidence: proba[best] };
+  for (let g = 1; g < nGroups; g++) if (sums[g] > sums[best]) best = g;
+  return { label: labels[best], confidence: sums[best] };
 }
 
 module.exports = { loadForest, predictProba, predict };
