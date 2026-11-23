@@ -1,4 +1,3 @@
-// screens/HomeDashboardScreen.js
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { colors, fonts, radii } from '../theme';
@@ -25,13 +24,28 @@ export default function HomeDashboardScreen({ navigation, route }) {
         <Text style={styles.mainCardSubtitle}>Open the camera and begin signing</Text>
         <TouchableOpacity
           style={styles.startVideoButton}
-          onPress={() => navigation.navigate('SignCapture')}
+          onPress={() => navigation.navigate('SignCapture', { language })}
           activeOpacity={0.85}
         >
           <Text style={styles.startVideoIcon}>📹</Text>
           <Text style={styles.startVideoText}>Start Video</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={styles.emergencyButton}
+        onPress={() => navigation.navigate('Emergency', { language })}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Emergency phrases"
+      >
+        <Text style={styles.emergencyIcon}>🚨</Text>
+        <View style={styles.emergencyTextWrap}>
+          <Text style={styles.emergencyTitle}>Emergency</Text>
+          <Text style={styles.emergencySubtitle}>Tap to speak urgent phrases aloud</Text>
+        </View>
+        <Text style={styles.emergencyArrow}>›</Text>
+      </TouchableOpacity>
 
       <View style={styles.tileRow}>
         <TouchableOpacity
@@ -124,6 +138,39 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 14,
     color: colors.textDark,
+  },
+  emergencyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.deepRed,
+    borderRadius: radii.card,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    marginBottom: 20,
+  },
+  emergencyIcon: {
+    fontSize: 28,
+    marginRight: 14,
+  },
+  emergencyTextWrap: {
+    flex: 1,
+  },
+  emergencyTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.white,
+  },
+  emergencySubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.white,
+    opacity: 0.9,
+    marginTop: 2,
+  },
+  emergencyArrow: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 28,
+    color: colors.white,
   },
   tileRow: {
     flexDirection: 'row',
