@@ -24,10 +24,22 @@ import {
   VisionCameraProxy,
 } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
-import { FRAME_STRIDE, SEQUENCE_LENGTH, UI_INTERVAL_MS } from '../lib/config';
+import {
+  FRAME_STRIDE,
+  SEQUENCE_LENGTH,
+  STT_PREFER_ONLINE_ENGLISH,
+  STT_TAGALOG_ONLINE_FALLBACK,
+  UI_INTERVAL_MS,
+} from '../lib/config';
 import { labelText } from '../lib/labels';
 import { getRecognizer, isRecognizerReady } from '../lib/models';
 import { buildWords } from '../lib/sentence';
+import {
+  buildVocabulary,
+  fixTranscript,
+  pickEnglishLocale,
+  pickTranscript,
+} from '../lib/speechFix';
 import { colors, fonts, radii } from '../theme';
 
 
@@ -120,13 +132,19 @@ export default function SignCaptureScreen({ navigation, route }) {
   const startRecognition = (mode) => {
     dbg('start', JSON.stringify(mode));
     clearTimeout(startWatchdogRef.current);
-    ExpoSpeechRecognitionModule.start({
+    const options = {
       lang: mode.lang,
       interimResults: true,
       continuous: mode.continuous,
       addsPunctuation: true,
       requiresOnDeviceRecognition: mode.onDevice,
-    });
+    };
+    if (languageRef.current !== 'tagalog') {
+      // English: bias towards the app's vocabulary and ask for alternative guesses.
+      options.contextualStrings = buildVocabulary('english');
+      options.maxAlternatives = 5;
+    }
+    ExpoSpeechRecognitionModule.start(options);
     startWatchdogRef.current = setTimeout(onStartTimeout, START_TIMEOUT_MS);
   };
 
@@ -216,7 +234,8 @@ export default function SignCaptureScreen({ navigation, route }) {
     }, 250);
   });
   useSpeechRecognitionEvent('result', (event) => {
-    const text = (event.results?.[0]?.transcript ?? '').trim();
+    const lang = languageRef.current;
+    const text = fixTranscript(pickTranscript(event.results, lang), lang).trim();
     dbg('event: result', event.isFinal, text);
     if (!text) return;
     if (event.isFinal) {
@@ -228,9 +247,44 @@ export default function SignCaptureScreen({ navigation, route }) {
       setInterim(text);
     }
   });
+  // Restart recognition with a different mode (used by the fallbacks below).
+  const restartWith = (mode) => {
+    modeRef.current = mode;
+    ignoreEndsRef.current += 1;
+    ExpoSpeechRecognitionModule.abort();
+    clearTimeout(restartTimerRef.current);
+    restartTimerRef.current = setTimeout(() => {
+      if (listeningRef.current) startRecognition(modeRef.current);
+    }, 400);
+  };
+
   useSpeechRecognitionEvent('error', (event) => {
     dbg('event: error', event.error, event.message);
     if (event.error === 'no-speech' || event.error === 'speech-timeout' || event.error === 'aborted') return;
+    const m = modeRef.current;
+    if (event.error === 'network' && listeningRef.current && !m.onDevice && m.offlineLocale) {
+      // No internet: switch to the installed offline model instead of giving up.
+      dbg('network error, falling back to offline', m.offlineLocale);
+      setMicMode('offline');
+      restartWith({ ...m, lang: m.offlineLocale, onDevice: true });
+      return;
+    }
+    if (
+      event.error === 'language-not-supported' &&
+      listeningRef.current &&
+      !m.onDevice &&
+      m.lang === 'fil-PH' &&
+      !m.triedAlt
+    ) {
+      dbg('fil-PH not supported online, trying tl-PH');
+      restartWith({ ...m, lang: 'tl-PH', triedAlt: true });
+      return;
+    }
+    if (event.error === 'network' && !m.onDevice && String(m.lang).toLowerCase().match(/^(fil|tl)/)) {
+      return failMic(
+        'Tagalog speech needs an internet connection unless the offline Filipino model is installed (Google app > Settings > Voice > Offline speech recognition > Filipino).'
+      );
+    }
     failMic(
       event.error === 'not-allowed'
         ? 'Microphone permission denied.'
@@ -270,14 +324,19 @@ export default function SignCaptureScreen({ navigation, route }) {
       if (cancelled()) return;
       if (!perm.granted) return failMic('Microphone permission denied.');
 
-      const lang = languageRef.current === 'tagalog' ? 'fil-PH' : 'en-US';
+      const isTagalog = languageRef.current === 'tagalog';
+      const localeInfo = isTagalog
+        ? null
+        : await withTimeout(ExpoSpeechRecognitionModule.getSupportedLocales({}), 1500, null);
+      const lang = isTagalog ? 'fil-PH' : pickEnglishLocale(localeInfo);
       const langName = lang === 'fil-PH' ? 'Tagalog' : 'English';
       const installedLocale = await offlineModelReady(lang);
-      const onDevice = !!installedLocale;
+      const preferOnline = !isTagalog && STT_PREFER_ONLINE_ENGLISH;
+      const onDevice = !!installedLocale && !preferOnline;
       if (cancelled()) return;
 
       if (!onDevice) {
-        if (OFFLINE_ONLY.includes(lang)) {
+        if (OFFLINE_ONLY.includes(lang) && !STT_TAGALOG_ONLINE_FALLBACK) {
           const dl = await withTimeout(
             ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: lang }),
             4000,
@@ -305,7 +364,12 @@ export default function SignCaptureScreen({ navigation, route }) {
       }
 
       Speech.stop();
-      modeRef.current = { lang: installedLocale || lang, onDevice, continuous: true };
+      modeRef.current = {
+        lang: onDevice ? installedLocale : lang,
+        onDevice,
+        continuous: true,
+        offlineLocale: preferOnline ? installedLocale || null : null,
+      };
       setMicMode(onDevice ? 'offline' : 'online');
       restartsRef.current = [];
       startRecognition(modeRef.current);
@@ -486,7 +550,7 @@ export default function SignCaptureScreen({ navigation, route }) {
         device={device}
         format={format}
         isActive
-        pixelFormat="rgb" 
+        pixelFormat="rgb" // required by the MediaPipe plugin
         fps={format ? Math.min(30, format.maxFps) : 30}
         frameProcessor={frameProcessor}
       />
